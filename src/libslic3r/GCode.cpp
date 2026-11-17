@@ -544,8 +544,12 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
             outer_wall_line_width = default_line_width == 0.0 ? config.filament_diameter.get_at(filament_id) : default_line_width;
         }
         Flow outer_wall_flow = Flow(outer_wall_line_width, config.layer_height, nozzle_diameter);
-        float outer_wall_speed = print.default_region_config().outer_wall_speed.get_at(extruder_id);
-        outer_wall_volumetric_speed = outer_wall_speed * outer_wall_flow.mm3_per_mm();
+        const FloatOrPercent outer_wall_speed = print.default_region_config().outer_wall_speed.get_at(extruder_id);
+        outer_wall_volumetric_speed = outer_wall_speed.value <= 0.0
+            ? filament_max_volumetric_speed
+            : outer_wall_speed.percent
+                ? filament_max_volumetric_speed * outer_wall_speed.value / 100.0f
+                : outer_wall_speed.value * outer_wall_flow.mm3_per_mm();
         if (outer_wall_volumetric_speed > filament_max_volumetric_speed)
             outer_wall_volumetric_speed = filament_max_volumetric_speed;
         return outer_wall_volumetric_speed;
@@ -1571,6 +1575,17 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
 //#define NOZZLE_CONFIG(OPT)   m_config.OPT.get_at(m_config.filament_map_2.values[m_writer.filament()->id()])
 #define NOZZLE_CONFIG(OPT) m_config.OPT.get_at(get_nozzle_config_index(m_writer.filament()->id()))
 
+static double speed_from_vflow_ratio(const FloatOrPercent &setting, double max_volumetric_speed, double mm3_per_mm)
+{
+    if (mm3_per_mm <= EPSILON || max_volumetric_speed <= 0.0)
+        return (!setting.percent && setting.value > 0.0) ? setting.value : 0.0;
+    if (setting.value <= EPSILON)
+        return max_volumetric_speed / mm3_per_mm;
+    return setting.percent
+        ? max_volumetric_speed * setting.value / 100.0 / mm3_per_mm
+        : setting.value;
+}
+
 // Collect pairs of object_layer + support_layer sorted by print_z.
 // object_layer & support_layer are considered to be on the same print_z, if they are not further than EPSILON.
 std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObject& object, std::string* out_empty_layer_warning)
@@ -2213,16 +2228,17 @@ namespace DoExport {
 	            const PrintRegion &region = object->printing_region(region_id);
 	            for (auto layer : object->layers()) {
 	                const LayerRegion* layerm = layer->regions()[region_id];
-	                if (region.config().get_abs_value("inner_wall_speed") == 0 ||
+	                const size_t nozzle_idx = get_nozzle_config_index(m_writer.filament()->id());
+                if (region.config().inner_wall_speed.get_at(nozzle_idx).value == 0 ||
                         // BBS: remove small small_perimeter_speed config, and will absolutely
                         // remove related code if no other issue in the coming release.
 	                    //region.config().get_abs_value("small_perimeter_speed") == 0 ||
-	                    region.config().outer_wall_speed.get_at(get_nozzle_config_index(m_writer.filament()->id())) == 0 ||
+	                    region.config().outer_wall_speed.get_at(nozzle_idx).value == 0 ||
 	                    region.config().get_abs_value("bridge_speed") == 0)
 	                    mm3_per_mm.push_back(layerm->perimeters.min_mm3_per_mm());
-	                if (region.config().get_abs_value("sparse_infill_speed") == 0 ||
-	                    region.config().get_abs_value("internal_solid_infill_speed") == 0 ||
-	                    region.config().get_abs_value("top_surface_speed") == 0 ||
+	                if (region.config().sparse_infill_speed.get_at(nozzle_idx).value == 0 ||
+	                    region.config().internal_solid_infill_speed.get_at(nozzle_idx).value == 0 ||
+	                    region.config().top_surface_speed.get_at(nozzle_idx).value == 0 ||
                         region.config().get_abs_value("bridge_speed") == 0)
                     {
                         // Minimal volumetric flow should not be calculated over ironing extrusions.
@@ -3347,7 +3363,9 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
         }
         double                 filament_max_volumetric_speed = m_config.option<ConfigOptionFloatsNullable>("filament_max_volumetric_speed")->get_at(initial_extruder_id);
         Flow                   pattern_line                  = Flow(pa_test.line_width(), 0.2, m_config.nozzle_diameter.get_at(0));
-        auto                   fast_speed = std::min(print.default_region_config().outer_wall_speed.get_at(get_nozzle_config_index(m_writer.filament()->id())), filament_max_volumetric_speed / pattern_line.mm3_per_mm());
+        const FloatOrPercent outer_wall_setting = print.default_region_config().outer_wall_speed.get_at(get_nozzle_config_index(m_writer.filament()->id()));
+        auto fast_speed = std::min(speed_from_vflow_ratio(outer_wall_setting, filament_max_volumetric_speed, pattern_line.mm3_per_mm()),
+                                   filament_max_volumetric_speed / pattern_line.mm3_per_mm());
         auto                   slow_speed = fast_speed / 4; /*std::max(20.0, fast_speed / 10.0);*/
         pa_test.set_speed(fast_speed, slow_speed);
         pa_test.draw_numbers() = print.calib_params().print_numbers;
@@ -5109,11 +5127,11 @@ GCode::LayerResult GCode::process_layer(
     }
     else if (print.calib_mode() == CalibMode::Calib_Vol_speed_Tower) {
         auto _speed = print.calib_params().start + print_z * print.calib_params().step;
-        m_calib_config.set_key_value("outer_wall_speed", new ConfigOptionFloatsNullable({ std::round(_speed) }));
+        m_calib_config.set_key_value("outer_wall_speed", new ConfigOptionFloatsOrPercentsNullable({ FloatOrPercent(std::round(_speed), false) }));
     }
     else if (print.calib_mode() == CalibMode::Calib_VFA_Tower) {
         auto _speed = print.calib_params().start + std::floor(print_z / 5.0) * print.calib_params().step;
-        m_calib_config.set_key_value("outer_wall_speed", new ConfigOptionFloatsNullable({ std::round(_speed) }));
+        m_calib_config.set_key_value("outer_wall_speed", new ConfigOptionFloatsOrPercentsNullable({ FloatOrPercent(std::round(_speed), false) }));
     }
     else if (print.calib_mode() == CalibMode::Calib_Retraction_tower) {
         auto _length = print.calib_params().start + std::floor(std::max(0.0, print_z - 0.4)) * print.calib_params().step;
@@ -6615,17 +6633,22 @@ bool GCode::is_enable_overhang_speed()
 double GCode::get_path_speed(const ExtrusionPath &path)
 {
     double min_speed = double(m_config.slow_down_min_speed.get_at(m_writer.filament()->id()));
+    double filament_max_volumetric_speed = FILAMENT_CONFIG(filament_max_volumetric_speed);
+    if (FILAMENT_CONFIG(filament_adaptive_volumetric_speed)) {
+        double fitted_value = calc_max_volumetric_speed(path.height, path.width, FILAMENT_CONFIG(volumetric_speed_coefficients));
+        filament_max_volumetric_speed = std::min(filament_max_volumetric_speed, fitted_value);
+    }
     // set speed
     double speed = 0;
     if (path.role() == erPerimeter) {
-        speed = NOZZLE_CONFIG(inner_wall_speed);
+        speed = speed_from_vflow_ratio(NOZZLE_CONFIG(inner_wall_speed), filament_max_volumetric_speed, path.mm3_per_mm);
         if (is_enable_overhang_speed()) {
             double new_speed = 0;
             new_speed        = get_overhang_degree_corr_speed(speed, path.overhang_degree);
             speed            = new_speed == 0.0 ? speed : new_speed;
         }
     } else if (path.role() == erExternalPerimeter) {
-        speed = NOZZLE_CONFIG(outer_wall_speed);
+        speed = speed_from_vflow_ratio(NOZZLE_CONFIG(outer_wall_speed), filament_max_volumetric_speed, path.mm3_per_mm);
         if (is_enable_overhang_speed()) {
             double new_speed = 0;
             new_speed        = get_overhang_degree_corr_speed(speed, path.overhang_degree);
@@ -6640,7 +6663,6 @@ double GCode::get_path_speed(const ExtrusionPath &path)
         speed = use_filament_bridge_speed ? FILAMENT_CONFIG(filament_bridge_speed) : NOZZLE_CONFIG(bridge_speed);
     }
     // BBS: if not set the speed, then use the filament_max_volumetric_speed directly
-    double filament_max_volumetric_speed = FILAMENT_CONFIG(filament_max_volumetric_speed);
     if (speed == 0) {
         if (path.mm3_per_mm > 0)
             speed = filament_max_volumetric_speed / path.mm3_per_mm;
@@ -6713,19 +6735,24 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
     loop.clip_end(clip_length, &paths);
     if (paths.empty()) return "";
 
-    double small_peri_speed=-1;
-    // apply the small perimeter speed
-    if (loop.length() <= SMALL_PERIMETER_LENGTH(NOZZLE_CONFIG(small_perimeter_threshold)))
-        small_peri_speed = NOZZLE_CONFIG(small_perimeter_speed).get_abs_value(NOZZLE_CONFIG(outer_wall_speed));
+    const FloatOrPercent small_perimeter_setting = NOZZLE_CONFIG(small_perimeter_speed);
+    const FloatOrPercent outer_wall_setting = NOZZLE_CONFIG(outer_wall_speed);
+    const double max_volumetric_speed = FILAMENT_CONFIG(filament_max_volumetric_speed);
+    const bool use_small_perimeter_speed =
+        loop.length() <= SMALL_PERIMETER_LENGTH(NOZZLE_CONFIG(small_perimeter_threshold)) &&
+        small_perimeter_setting.value > 0.0;
 
     // extrude along the path
     std::string gcode;
 
-    const auto  speed_for_path = [&speed, &small_peri_speed](const ExtrusionPath &path) {
-        // don't apply small perimeter setting for bridge/non-perimeters
-        const bool is_small_peri = is_perimeter(path.role()) && !is_bridge(path.role()) && small_peri_speed > 0;
-        return !is_small_peri ? speed :
-            (speed == -1) ? small_peri_speed : std::min(small_peri_speed, speed);
+    const auto speed_for_path = [&speed, &small_perimeter_setting, &outer_wall_setting,
+                                 max_volumetric_speed, use_small_perimeter_speed](const ExtrusionPath &path) {
+        const bool is_small_peri = use_small_perimeter_speed && is_perimeter(path.role()) && !is_bridge(path.role());
+        if (!is_small_peri)
+            return speed;
+        const double outer_wall_speed = speed_from_vflow_ratio(outer_wall_setting, max_volumetric_speed, path.mm3_per_mm);
+        const double small_peri_speed = small_perimeter_setting.get_abs_value(outer_wall_speed);
+        return (speed == -1) ? small_peri_speed : std::min(small_peri_speed, speed);
     };
 
     //BBS: avoid overhang on conditional scarf mode
@@ -7698,10 +7725,19 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
     double e_per_mm = m_writer.filament()->e_per_mm3() * _mm3_per_mm;
 
     double min_speed = double(m_config.slow_down_min_speed.get_at(m_writer.filament()->id()));
+    double filament_max_volumetric_speed = FILAMENT_CONFIG(filament_max_volumetric_speed);
+    if (FILAMENT_CONFIG(filament_adaptive_volumetric_speed)) {
+        double fitted_value = calc_max_volumetric_speed(path.height, path.width, FILAMENT_CONFIG(volumetric_speed_coefficients));
+        filament_max_volumetric_speed = std::min(filament_max_volumetric_speed, fitted_value);
+    }
+    bool is_flow_calib = m_curr_print && m_curr_print->calib_mode() == CalibMode::Calib_Flow_Rate;
+    double flow_ratio = this->config().print_flow_ratio.value;
+    auto _mm3_per_mm_for_speed = (is_flow_calib && flow_ratio > 0) ? _mm3_per_mm / flow_ratio : _mm3_per_mm;
+
     // set speed
     auto calc_speed_by_role = [&]() -> void {
         if (path.role() == erPerimeter) {
-            speed = NOZZLE_CONFIG(inner_wall_speed);
+            speed = speed_from_vflow_ratio(NOZZLE_CONFIG(inner_wall_speed), filament_max_volumetric_speed, _mm3_per_mm_for_speed);
             //reset speed by auto compensation speed
             if(use_seperate_speed) {
                 speed = NOZZLE_CONFIG(circle_compensation_speed);
@@ -7713,7 +7749,7 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
                 speed = new_speed == 0.0 ? speed : new_speed;
             }
         } else if (path.role() == erExternalPerimeter) {
-            speed = NOZZLE_CONFIG(outer_wall_speed);
+            speed = speed_from_vflow_ratio(NOZZLE_CONFIG(outer_wall_speed), filament_max_volumetric_speed, _mm3_per_mm_for_speed);
             // reset speed by auto compensation speed
             if (use_seperate_speed) {
                 speed = NOZZLE_CONFIG(circle_compensation_speed);
@@ -7731,20 +7767,21 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
             bool use_filament_bridge_speed = FILAMENT_CONFIG(override_process_overhang_speed);
             speed = use_filament_bridge_speed ? FILAMENT_CONFIG(filament_bridge_speed) : NOZZLE_CONFIG(bridge_speed);
         } else if (path.role() == erInternalInfill) {
-            speed = NOZZLE_CONFIG(sparse_infill_speed);
+            speed = speed_from_vflow_ratio(NOZZLE_CONFIG(sparse_infill_speed), filament_max_volumetric_speed, _mm3_per_mm_for_speed);
         } else if (path.role() == erSolidInfill) {
-            speed = NOZZLE_CONFIG(internal_solid_infill_speed);
+            speed = speed_from_vflow_ratio(NOZZLE_CONFIG(internal_solid_infill_speed), filament_max_volumetric_speed, _mm3_per_mm_for_speed);
         } else if (path.role() == erFloatingVerticalShell){
             if(use_seperate_speed){
                 bool use_filament_bridge_speed = FILAMENT_CONFIG(override_process_overhang_speed);
                 speed = use_filament_bridge_speed ? FILAMENT_CONFIG(filament_bridge_speed) : NOZZLE_CONFIG(bridge_speed);
             }
             else{
-                speed = NOZZLE_CONFIG(vertical_shell_speed).get_abs_value(NOZZLE_CONFIG(internal_solid_infill_speed));
+                const double internal_solid_speed = speed_from_vflow_ratio(NOZZLE_CONFIG(internal_solid_infill_speed), filament_max_volumetric_speed, _mm3_per_mm_for_speed);
+                speed = NOZZLE_CONFIG(vertical_shell_speed).get_abs_value(internal_solid_speed);
             }
         }
          else if (path.role() == erTopSolidInfill) {
-            speed = NOZZLE_CONFIG(top_surface_speed);
+            speed = speed_from_vflow_ratio(NOZZLE_CONFIG(top_surface_speed), filament_max_volumetric_speed, _mm3_per_mm_for_speed);
         } else if (path.role() == erIroning) {
             speed = m_config.get_abs_value("ironing_speed");
         } else if (path.role() == erSupportIroning) {
@@ -7776,7 +7813,7 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
                 bool use_filament_bridge_speed = FILAMENT_CONFIG(override_process_overhang_speed);
                 speed = use_filament_bridge_speed ? FILAMENT_CONFIG(filament_bridge_speed) : NOZZLE_CONFIG(bridge_speed);
             } else {
-                speed = NOZZLE_CONFIG(internal_solid_infill_speed);
+                speed = speed_from_vflow_ratio(NOZZLE_CONFIG(internal_solid_infill_speed), filament_max_volumetric_speed, _mm3_per_mm_for_speed);
             }
         } else if (path.role() == erGapFill) {
             speed = NOZZLE_CONFIG(gap_infill_speed);
@@ -7799,20 +7836,7 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
         speed = std::min(previous_speed, speed);
     } //otherwise, keep previous speed in other conditions
 
-    //BBS: if not set the speed, then use the filament_max_volumetric_speed directly
-    double filament_max_volumetric_speed = FILAMENT_CONFIG(filament_max_volumetric_speed);
-    if (FILAMENT_CONFIG(filament_adaptive_volumetric_speed)){
-        double fitted_value = calc_max_volumetric_speed(path.height, path.width, FILAMENT_CONFIG(volumetric_speed_coefficients));
-        filament_max_volumetric_speed = std::min(filament_max_volumetric_speed, fitted_value);
-    }
-
-    // In flow rate calibration mode, exclude only print_flow_ratio from the volumetric
-    // speed cap so that speed stays constant across calibration objects, while keeping
-    // other flow corrections (initial_layer_flow_ratio, top_solid_infill_flow_ratio,
-    // m_sub_layer_flow_ratio) effective for speed limiting.
-    bool is_flow_calib = m_curr_print && m_curr_print->calib_mode() == CalibMode::Calib_Flow_Rate;
-    double flow_ratio  = this->config().print_flow_ratio.value;
-    auto _mm3_per_mm_for_speed = (is_flow_calib && flow_ratio > 0) ? _mm3_per_mm / flow_ratio : _mm3_per_mm;
+    // Effective Vflow cap and corrected extrusion cross-section were resolved above.
 
     if( speed == 0 )
     {

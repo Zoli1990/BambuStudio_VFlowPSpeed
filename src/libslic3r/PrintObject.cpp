@@ -361,67 +361,67 @@ std::unordered_map<int, std::unordered_map<int, double>> PrintObject::calc_estim
         return max_volumetric_speed / mm3_per_mm;
     };
 
-    auto get_speed_from_role_with_filament = [](ExtrusionRole role, int filament_id, const PrintRegionConfig &region_config, const PrintConfig &print_config, int extruder_id) -> double {
+    auto get_speed_from_role_with_filament = [](ExtrusionRole role, int filament_id, const PrintRegionConfig &region_config,
+                                                const PrintConfig &print_config, int extruder_id,
+                                                double speed_from_filament) -> double {
+        const auto resolve_vflow_speed = [speed_from_filament](const FloatOrPercent &setting) {
+            if (setting.value <= 0.0) return speed_from_filament;
+            return setting.percent ? speed_from_filament * setting.value / 100.0 : setting.value;
+        };
         switch (role) {
-        case erPerimeter: return region_config.inner_wall_speed.values[extruder_id];
-        case erExternalPerimeter: return region_config.outer_wall_speed.values[extruder_id];
+        case erPerimeter: return resolve_vflow_speed(region_config.inner_wall_speed.values[extruder_id]);
+        case erExternalPerimeter: return resolve_vflow_speed(region_config.outer_wall_speed.values[extruder_id]);
         case erOverhangPerimeter:
         case erBridgeInfill:
         case erSupportTransition: {
             bool use_filament_bridge_speed = print_config.filament_enable_overhang_speed.get_at(filament_id);
-
-            if (use_filament_bridge_speed)
-                return print_config.filament_bridge_speed.values[filament_id];
-            else
-                return region_config.bridge_speed.values[extruder_id];
+            if (use_filament_bridge_speed) return print_config.filament_bridge_speed.values[filament_id];
+            return region_config.bridge_speed.values[extruder_id];
         }
-        case erInternalInfill: return region_config.sparse_infill_speed.values[extruder_id];
+        case erInternalInfill: return resolve_vflow_speed(region_config.sparse_infill_speed.values[extruder_id]);
         case erFloatingVerticalShell:
-        case erSolidInfill: return region_config.internal_solid_infill_speed.values[extruder_id];
-        case erTopSolidInfill: return region_config.top_surface_speed.values[extruder_id];
+            return region_config.vertical_shell_speed.values[extruder_id].get_abs_value(
+                resolve_vflow_speed(region_config.internal_solid_infill_speed.values[extruder_id]));
+        case erSolidInfill: return resolve_vflow_speed(region_config.internal_solid_infill_speed.values[extruder_id]);
+        case erTopSolidInfill: return resolve_vflow_speed(region_config.top_surface_speed.values[extruder_id]);
         case erBottomSurface: return print_config.initial_layer_speed.values[extruder_id];
         case erGapFill: return region_config.gap_infill_speed.values[extruder_id];
         }
-        return region_config.internal_solid_infill_speed.values[extruder_id];
+        return resolve_vflow_speed(region_config.internal_solid_infill_speed.values[extruder_id]);
     };
 
     std::unordered_map<int, std::unordered_map<int, double>> filament_print_time;
 
-    auto process_epath = [&](int filament, int eidx, ExtrusionPath *path, double speed_from_config) {
-        double speed_from_filament = get_limit_from_volumetric_speed(filament, eidx, path->width, path->height);
-        double speed_applied       = std::min(speed_from_filament, speed_from_config);
-        filament_print_time[filament][eidx] += unscale_(path->length()) / speed_applied;
+    auto process_epath = [&](int filament, int eidx, ExtrusionPath *path, const PrintRegionConfig &region_config) {
+        double vflow_speed = get_limit_from_volumetric_speed(filament, eidx, path->width, path->height);
+        double config_speed = get_speed_from_role_with_filament(path->role(), filament, region_config, this->print()->config(), eidx, vflow_speed);
+        filament_print_time[filament][eidx] += unscale_(path->length()) / std::min(vflow_speed, config_speed);
     };
-
-    auto process_eloop = [&](int filament, int eidx, ExtrusionLoop *eloop, double speed_from_config) {
+    auto process_eloop = [&](int filament, int eidx, ExtrusionLoop *eloop, const PrintRegionConfig &region_config) {
         for (auto &path : eloop->paths) {
-            double speed_from_filament = get_limit_from_volumetric_speed(filament, eidx, path.width, path.height);
-            double speed_applied       = std::min(speed_from_filament, speed_from_config);
-            filament_print_time[filament][eidx] += unscale_(path.length()) / speed_applied;
+            double vflow_speed = get_limit_from_volumetric_speed(filament, eidx, path.width, path.height);
+            double config_speed = get_speed_from_role_with_filament(path.role(), filament, region_config, this->print()->config(), eidx, vflow_speed);
+            filament_print_time[filament][eidx] += unscale_(path.length()) / std::min(vflow_speed, config_speed);
         }
     };
-
-    auto process_empath = [&](int filament, int eidx, ExtrusionMultiPath *empath, double speed_from_config) {
+    auto process_empath = [&](int filament, int eidx, ExtrusionMultiPath *empath, const PrintRegionConfig &region_config) {
         for (auto &path : empath->paths) {
-            double speed_from_filament = get_limit_from_volumetric_speed(filament, eidx, path.width, path.height);
-            double speed_applied       = std::min(speed_from_filament, speed_from_config);
-            filament_print_time[filament][eidx] += unscale_(path.length()) / speed_applied;
+            double vflow_speed = get_limit_from_volumetric_speed(filament, eidx, path.width, path.height);
+            double config_speed = get_speed_from_role_with_filament(path.role(), filament, region_config, this->print()->config(), eidx, vflow_speed);
+            filament_print_time[filament][eidx] += unscale_(path.length()) / std::min(vflow_speed, config_speed);
         }
     };
-
-    std::function<void(int, int, ExtrusionEntity *, double)> process_entity = [&](int filament, int eidx, ExtrusionEntity *entity, double speed_from_config) {
+    std::function<void(int, int, ExtrusionEntity *, const PrintRegionConfig &)> process_entity =
+        [&](int filament, int eidx, ExtrusionEntity *entity, const PrintRegionConfig &region_config) {
         if (entity->is_collection()) {
-            // 如果是集合类型，则递归处理其子entity
             auto *collection = dynamic_cast<ExtrusionEntityCollection *>(entity);
-            if (collection) {
-                for (auto &sub_entity : collection->entities) { process_entity(filament, eidx, sub_entity, speed_from_config); }
-            }
+            if (collection) for (auto &sub_entity : collection->entities) process_entity(filament, eidx, sub_entity, region_config);
         } else if (auto path_ptr = dynamic_cast<ExtrusionPath *>(entity)) {
-            process_epath(filament, eidx, path_ptr, speed_from_config);
+            process_epath(filament, eidx, path_ptr, region_config);
         } else if (auto loop_ptr = dynamic_cast<ExtrusionLoop *>(entity)) {
-            process_eloop(filament, eidx, loop_ptr, speed_from_config);
+            process_eloop(filament, eidx, loop_ptr, region_config);
         } else if (auto empath_ptr = dynamic_cast<ExtrusionMultiPath *>(entity)) {
-            process_empath(filament, eidx, empath_ptr, speed_from_config);
+            process_empath(filament, eidx, empath_ptr, region_config);
         } else {
             BOOST_LOG_TRIVIAL(warning) << "Unknown extrusion entity type encountered during filament print time estimation.";
         }
@@ -454,8 +454,7 @@ std::unordered_map<int, std::unordered_map<int, double>> PrintObject::calc_estim
                         else
                             continue;
 
-                        double speed_from_config = get_speed_from_role_with_filament(role, filament, region.config(), this->print()->config(), eidx);
-                        process_entity(filament, eidx, entity, speed_from_config);
+                        process_entity(filament, eidx, entity, region.config());
                     }
                 }
             }

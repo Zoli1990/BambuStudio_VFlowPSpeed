@@ -2623,7 +2623,6 @@ void PrintConfigDef::init_fff_params()
                      "the internal solid infill speed above");
     def->category = L("Speed");
     def->sidetext   = L("mm/s or %");
-    def->ratio_over = "internal_solid_infill_speed";
     def->min = 0;
     def->mode = comAdvanced;
     def->nullable = true;
@@ -2747,16 +2746,16 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0));
 
-    def = this->add("outer_wall_speed", coFloats);
+    def = this->add("outer_wall_speed", coFloatsOrPercents);
     def->label = L("Outer wall");
     def->category = L("Speed");
-    def->tooltip = L("Speed of outer wall which is outermost and visible. "
-                     "It's used to be slower than inner wall speed to get better quality.");
-    def->sidetext = L("mm/s");
+    def->tooltip = L("Speed of the outermost visible wall. Enter mm/s for an absolute speed, "
+                     "or a percentage of the selected filament's maximum volumetric flow.");
+    def->sidetext = L("mm/s or %");
     def->min = 0;
     def->mode = comAdvanced;
     def->nullable = true;
-    def->set_default_value(new ConfigOptionFloatsNullable{60});
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(60, false)});
 
 
     def = this->add("small_perimeter_speed", coFloatsOrPercents);
@@ -2766,7 +2765,6 @@ void PrintConfigDef::init_fff_params()
                        "(usually holes). If expressed as percentage (for example: 80%) it will be calculated on"
                        "the outer wall speed setting above. Set to zero for auto.");
     def->sidetext   = L("mm/s or %");
-    def->ratio_over = "outer_wall_speed";
     def->min = 0;
     def->mode = comAdvanced;
     def->nullable = true;
@@ -4705,15 +4703,16 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionPercent(15));
 
-    def = this->add("sparse_infill_speed", coFloats);
+    def = this->add("sparse_infill_speed", coFloatsOrPercents);
     def->label = L("Sparse infill");
     def->category = L("Speed");
-    def->tooltip = L("Speed of internal sparse infill");
-    def->sidetext = L("mm/s");
+    def->tooltip = L("Speed of sparse infill. Enter mm/s for an absolute speed, "
+                     "or a percentage of the selected filament's maximum volumetric flow.");
+    def->sidetext = L("mm/s or %");
     def->min = 0;
     def->mode = comAdvanced;
     def->nullable = true;
-    def->set_default_value(new ConfigOptionFloatsNullable{100});
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(100, false)});
 
     def = this->add("inherits", coString);
     //def->label = L("Inherits profile");
@@ -5348,16 +5347,17 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.4));
 
-    def = this->add("inner_wall_speed", coFloats);
+    def = this->add("inner_wall_speed", coFloatsOrPercents);
     def->label = L("Inner wall");
     def->category = L("Speed");
-    def->tooltip = L("Speed of inner wall");
-    def->sidetext = L("mm/s");
+    def->tooltip = L("Speed of inner walls. Enter mm/s for an absolute speed, "
+                     "or a percentage of the selected filament's maximum volumetric flow.");
+    def->sidetext = L("mm/s or %");
     def->aliases = { "perimeter_feed_rate" };
     def->min = 0;
     def->mode = comAdvanced;
     def->nullable = true;
-    def->set_default_value(new ConfigOptionFloatsNullable{60});
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(60, false)});
 
     def = this->add("wall_loops", coInt);
     def->label = L("Wall loops");
@@ -6109,15 +6109,16 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.4));
 
-    def = this->add("internal_solid_infill_speed", coFloats);
+    def = this->add("internal_solid_infill_speed", coFloatsOrPercents);
     def->label = L("Internal solid infill");
     def->category = L("Speed");
-    def->tooltip = L("Speed of internal solid infill, not the top and bottom surface");
-    def->sidetext = L("mm/s");
+    def->tooltip = L("Speed of internal solid infill, not the top and bottom surface. "
+                     "Enter mm/s for an absolute speed, or a percentage of the selected filament's maximum volumetric flow.");
+    def->sidetext = L("mm/s or %");
     def->min = 0;
     def->mode = comAdvanced;
     def->nullable = true;
-    def->set_default_value(new ConfigOptionFloatsNullable{100});
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(100, false)});
 
     def = this->add("spiral_mode", coBool);
     def->label = L("Spiral vase");
@@ -6798,15 +6799,16 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.4));
 
-    def = this->add("top_surface_speed", coFloats);
+    def = this->add("top_surface_speed", coFloatsOrPercents);
     def->label = L("Top surface");
     def->category = L("Speed");
-    def->tooltip = L("Speed of top surface infill which is solid");
-    def->sidetext = L("mm/s");
+    def->tooltip = L("Speed of solid top surfaces. Enter mm/s for an absolute speed, "
+                     "or a percentage of the selected filament's maximum volumetric flow.");
+    def->sidetext = L("mm/s or %");
     def->min = 0;
     def->mode = comAdvanced;
     def->nullable = true;
-    def->set_default_value(new ConfigOptionFloatsNullable{100});
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(100, false)});
 
     def = this->add("top_shell_layers", coInt);
     def->label = L("Top shell layers");
@@ -8340,10 +8342,7 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         opt_key = "enforce_support_layers";
     } else if ((opt_key == "initial_layer_print_height"   ||
                 opt_key == "initial_layer_speed"          ||
-                opt_key == "internal_solid_infill_speed"  ||
-                opt_key == "top_surface_speed"            ||
                 opt_key == "support_interface_speed"      ||
-                opt_key == "outer_wall_speed"             ||
                 opt_key == "support_object_xy_distance")     && value.find("%") != std::string::npos) {
         //BBS: this is old profile in which value is expressed as percentage.
         //But now these key-value must be absolute value.

@@ -2457,17 +2457,16 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         if (std::find(applying.begin(), applying.end(), opt_key) == applying.end() &&
             m_config->has("ironing_type") && m_config->has("top_surface_speed") &&
             m_config->opt_enum<IroningType>("ironing_type") != IroningType::NoIroning) {
-            auto *speed_opt = m_config->option<ConfigOptionFloatsNullable>("top_surface_speed");
+            auto *speed_opt = m_config->option<ConfigOptionFloatsOrPercentsNullable>("top_surface_speed");
             if (speed_opt && !speed_opt->values.empty()) {
                 static constexpr double recommended_speed = 100.0;
-                std::vector<double>     new_values        = speed_opt->values;
-                bool                    need_change       = false;
+                std::vector<FloatOrPercent> new_values = speed_opt->values;
+                bool need_change = false;
                 for (size_t i = 0; i < new_values.size(); ++i) {
-                    if (speed_opt->is_nil(i))
-                        continue;
-                    if (new_values[i] > recommended_speed + EPSILON) {
-                        new_values[i] = recommended_speed;
-                        need_change   = true;
+                    if (speed_opt->is_nil(i) || new_values[i].percent) continue;
+                    if (new_values[i].value > recommended_speed + EPSILON) {
+                        new_values[i].value = recommended_speed;
+                        need_change = true;
                     }
                 }
                 if (need_change) {
@@ -2480,7 +2479,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                     MessageDialog dialog(wxGetApp().plater(), msg_text, "Suggestion", wxICON_WARNING | wxYES | wxNO);
                     if (dialog.ShowModal() == wxID_YES) {
                         DynamicPrintConfig new_conf;
-                        new_conf.set_key_value("top_surface_speed", new ConfigOptionFloatsNullable(new_values));
+                        new_conf.set_key_value("top_surface_speed", new ConfigOptionFloatsOrPercentsNullable(new_values));
                         m_config_manipulation.apply(m_config, &new_conf);
                     }
                     wxGetApp().plater()->update();
