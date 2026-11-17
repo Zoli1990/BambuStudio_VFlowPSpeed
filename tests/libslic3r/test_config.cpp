@@ -242,6 +242,18 @@ SCENARIO("Config accessor functions perform as expected.", "[Config]") {
                 REQUIRE(config.opt<ConfigOptionString>("end_gcode")->value == float_to_string_decimal_point(100.5));
             }
         }
+        WHEN("A print speed accepts Vflow percentages and absolute mm/s.") {
+            config.set_deserialize_strict("outer_wall_speed", "50%");
+            config.set_deserialize_strict("sparse_infill_speed", "150");
+            THEN("The percent and absolute representations are preserved.") {
+                auto outer = config.opt<ConfigOptionFloatsOrPercentsNullable>("outer_wall_speed");
+                auto infill = config.opt<ConfigOptionFloatsOrPercentsNullable>("sparse_infill_speed");
+                REQUIRE(outer->get_at(0).percent == true);
+                REQUIRE(outer->get_at(0).value == 50);
+                REQUIRE(infill->get_at(0).percent == false);
+                REQUIRE(infill->get_at(0).value == 150);
+            }
+        }
         WHEN("A float or percent is set as a percent through the string interface.") {
             config.set_deserialize_strict("first_layer_extrusion_width", "100%");
             THEN("Value and percent flag are 100/true") {

@@ -1171,7 +1171,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionEnum<InfillPattern>, internal_solid_infill_pattern))
     ((ConfigOptionEnum<InfillPattern>, sub_top_surface_pattern))
     ((ConfigOptionFloat, outer_wall_line_width))
-    ((ConfigOptionFloatsNullable, outer_wall_speed))
+    ((ConfigOptionFloatsOrPercentsNullable, outer_wall_speed))
     ((ConfigOptionFloat, infill_direction))
     ((ConfigOptionBool, symmetric_infill_y_axis))
     ((ConfigOptionFloat, infill_shift_step))
@@ -1209,7 +1209,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, skin_infill_line_width))
     ((ConfigOptionFloat, skeleton_infill_line_width))
     ((ConfigOptionPercent, infill_wall_overlap))
-    ((ConfigOptionFloatsNullable, sparse_infill_speed))
+    ((ConfigOptionFloatsOrPercentsNullable, sparse_infill_speed))
     //BBS
     ((ConfigOptionBool, infill_combination))
     // Ironing options
@@ -1226,7 +1226,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, smooth_coefficient))
     ((ConfigOptionInt, wall_filament))
     ((ConfigOptionFloat, inner_wall_line_width))
-    ((ConfigOptionFloatsNullable, inner_wall_speed))
+    ((ConfigOptionFloatsOrPercentsNullable, inner_wall_speed))
     // Total number of perimeters.
     ((ConfigOptionInt, wall_loops))
     // Modifier-only: apply this modifier for m layers, then skip it for n layers.
@@ -1238,13 +1238,13 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, minimum_sparse_infill_area))
     ((ConfigOptionInt, solid_infill_filament))
     ((ConfigOptionFloat, internal_solid_infill_line_width))
-    ((ConfigOptionFloatsNullable, internal_solid_infill_speed))
+    ((ConfigOptionFloatsOrPercentsNullable, internal_solid_infill_speed))
     // Detect thin walls.
     ((ConfigOptionBool, detect_thin_wall))
     ((ConfigOptionFloat, top_surface_line_width))
     ((ConfigOptionInt, top_shell_layers))
     ((ConfigOptionFloat, top_shell_thickness))
-    ((ConfigOptionFloatsNullable, top_surface_speed))
+    ((ConfigOptionFloatsOrPercentsNullable, top_surface_speed))
     ((ConfigOptionFloatsOrPercentsNullable, small_perimeter_speed))
     ((ConfigOptionFloatsNullable, small_perimeter_threshold))
     ((ConfigOptionFloatsOrPercentsNullable, vertical_shell_speed))
